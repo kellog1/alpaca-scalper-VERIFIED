@@ -1,0 +1,93 @@
+# ============================================================
+# Aggressive Scalping Bot Configuration
+# All risk/strategy parameters are tunable here — no code edits
+# ============================================================
+
+symbols:
+  - TSLA
+  - NVDA
+  - AMD
+  - MARA
+  - SOXL
+  - SOXS
+  - SPY
+  - QQQ
+
+bars:
+  timeframe_seconds: 30        # aggregate ticks into 30-second bars
+  lookback_bars: 60            # bars kept in memory per symbol
+
+strategy:
+  breakout_lookback: 5         # break of last N-bar high/low
+  volume_spike_mult: 2.0       # bar volume must exceed 2x avg
+  volume_avg_period: 20
+  ema_fast: 5
+  ema_slow: 13
+  atr_period: 10
+  atr_expansion_mult: 1.0      # bar range must exceed 1.0x ATR(10)
+  max_reentries_per_trend: 2
+
+  # Higher-timeframe trend filtering (new)
+  use_htf_trend_filter: true   # gate entries on higher-TF trend alignment
+  htf_timeframe: 300           # 5-minute bars in seconds
+  htf_ema_period: 20           # EMA period for HTF trend (like the Pine script)
+  
+  # VWAP side filtering (new)
+  use_vwap_filter: true        # only long above VWAP, short below
+
+# Mean-reversion sketch — toggle USE_MEAN_REVERSION in backtest.py to try it.
+# Has its own exit profile (below) since it trades 5-min bars, not 30s.
+mean_reversion:
+  timeframe_seconds: 300       # trade 5-min bars, not the 30s scalp bars
+  dev_threshold_pct: 0.004     # fade once price is 0.4% away from session VWAP
+  atr_period: 10
+  atr_tp_mult: 1.5             # TP = entry -+ (atr x this), toward VWAP
+  atr_sl_mult: 1.0             # SL = entry +- (atr x this), beyond the extension
+  trail_activate_pct: 0.004    # trailing stop arms at +0.4%
+  trail_by_pct: 0.002          # trails by 0.2%
+  max_hold_seconds: 1200       # 20 min = 4 bars of room to revert
+
+exits:
+  profit_target_pct: 0.004     # kept for backward compat; overridden by atr_tp_mult if > 0
+  hard_stop_pct: 0.0025        # kept for backward compat; overridden by atr_sl_mult if > 0
+  
+  # ATR-adaptive targets and stops (replaces fixed percentages)
+  atr_tp_mult: 2.0             # TP = entry ± (atr × this multiple)
+  atr_sl_mult: 1.5             # SL = entry ± (atr × this multiple)
+  
+  trail_activate_pct: 0.002    # trailing stop arms at +0.2%
+  trail_by_pct: 0.001          # trails by 0.1%
+  max_hold_seconds: 300        # 5-minute time exit
+
+risk:
+  risk_per_trade_pct: 0.025    # 2.5% of equity risked per trade
+  use_intraday_leverage: true  # use up to 4x intraday buying power
+  max_leverage: 4.0
+  max_concurrent_positions: 6
+  daily_loss_limit_pct: 0.06   # halt trading at -6% on the day
+  profit_lock_pct: 0.05        # at +5%, tighten all stops to breakeven
+
+sessions:
+  timezone: "America/New_York"
+  open_trading_start: "09:35"  # skip first 5 min of chaos... then dive in
+  open_trading_end: "11:00"
+  midday_size_scale: 0.5       # halve position size midday
+  power_hour_start: "15:00"
+  power_hour_end: "15:50"
+  flatten_before_close_min: 10 # flatten all positions 10 min before close
+
+execution:
+  order_rate_limit_per_min: 190   # stay under Alpaca's 200 req/min
+  dry_run: false                  # true = log signals, place no orders
+
+# Transaction cost model — used by backtest.py to compute NET results.
+# Costs are charged PER SIDE (entry and exit each pay them).
+costs:
+  half_spread_bps: 1.5         # half the bid/ask spread in basis points
+  slippage_bps: 2.0            # base market-impact slippage per side
+  stop_extra_slippage_bps: 3.0 # extra slippage when exiting via stop
+                               # (stops fill through the level in fast markets)
+
+logging:
+  sqlite_path: "scalper_log.db"
+  console_level: "INFO"
