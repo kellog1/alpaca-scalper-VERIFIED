@@ -6,6 +6,7 @@ transitions, EOD flatten, and the profit lock.
 """
 import asyncio
 import logging
+from datetime import datetime
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
@@ -35,6 +36,8 @@ class ScalperBot:
             on_bar=self.on_bar, on_tick=self.exec.on_price,
         )
         self._flattened_today = False
+        self._eod_reported = False
+        self._current_day = None
 
         # Reconciles broker-side bracket TP/SL fills, which the price-tick
         # loop never sees (see ExecutionEngine.on_trade_update).
@@ -44,14 +47,33 @@ class ScalperBot:
             self.trading_stream.subscribe_trade_updates(self.exec.on_trade_update)
 
     # ---- account helpers ---------------------------------------------------
-    def _account(self):
-        return self.trading.get_account()
+    async def _account(self):
+        # TradingClient is a blocking REST client; run it off the event loop
+        # so a slow API call doesn't stall bar/tick processing for every symbol.
+        return await asyncio.to_thread(self.trading.get_account)
 
     def _open_position_value(self) -> float:
         return sum(p.qty * p.entry for p in self.exec.positions.values())
 
+    # ---- daily lifecycle ---------------------------------------------------
+    async def _check_day_rollover(self):
+        """Re-arm daily state (loss halt, profit lock, EOD flatten/report) on
+        a new trading day. Without this, a bot left running past midnight
+        would keep using day-1's starting equity forever, never flatten at
+        close again, and never print another EOD report."""
+        day = datetime.now(self.risk.tz).date()
+        if day == self._current_day:
+            return
+        self._current_day = day
+        acct = await self._account()
+        self.risk.start_of_day(float(acct.equity))
+        self._flattened_today = False
+        self._eod_reported = False
+        log.info("New trading day: %s", day)
+
     # ---- bar handler ---------------------------------------------------------
     async def on_bar(self, symbol: str, bar: dict):
+        await self._check_day_rollover()
         session = self.risk.session_state()
 
         if session == "flatten" and not self._flattened_today:
@@ -66,15 +88,17 @@ class ScalperBot:
         if sig is None:
             return
 
-        # one position per symbol at a time
-        if symbol in self.exec.positions:
+        # one position per symbol at a time — also blocks re-entry while a
+        # prior close on this symbol is still awaiting broker confirmation,
+        # since that fill hasn't been reconciled into the trade log yet.
+        if self.exec.has_open_or_pending(symbol):
             self.tlog.signal(symbol, sig.side.value, sig.price, sig.reason, acted=False)
             return
         if not self.risk.can_open(len(self.exec.positions), session):
             self.tlog.signal(symbol, sig.side.value, sig.price, sig.reason, acted=False)
             return
 
-        acct = self._account()
+        acct = await self._account()
         equity = float(acct.equity)
         buying_power = float(acct.buying_power)
         
@@ -102,10 +126,10 @@ class ScalperBot:
     # ---- supervisor loop --------------------------------------------------------
     async def supervisor(self):
         """Every 15s: daily limits, profit lock, halt-flatten, EOD report."""
-        reported = False
         while True:
             try:
-                acct = self._account()
+                await self._check_day_rollover()
+                acct = await self._account()
                 state = self.risk.check_daily_limits(float(acct.equity))
                 if state["halt"] and self.exec.positions:
                     await self.exec.flatten_all("daily_loss_halt")
@@ -113,16 +137,17 @@ class ScalperBot:
                     await self.exec.tighten_to_breakeven()
 
                 session = self.risk.session_state()
-                if session == "closed" and self._flattened_today and not reported:
+                if session == "closed" and self._flattened_today and not self._eod_reported:
                     self.tlog.eod_report()
-                    reported = True
+                    self._eod_reported = True
             except Exception:
                 log.exception("Supervisor iteration failed")
             await asyncio.sleep(15)
 
     # ---- entrypoint -----------------------------------------------------------------
     async def run(self):
-        acct = self._account()
+        acct = await self._account()
+        self._current_day = datetime.now(self.risk.tz).date()
         self.risk.start_of_day(float(acct.equity))
         self.exec.resync()
         mode = "DRY RUN" if self.dry_run else "PAPER TRADING"
