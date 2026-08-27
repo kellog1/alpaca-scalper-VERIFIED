@@ -127,7 +127,7 @@ class ExecutionEngine:
             client_order_id=pos.client_id,
         )
         try:
-            order = self.trading.submit_order(req)
+            order = await asyncio.to_thread(self.trading.submit_order, req)
             self.tlog.order(sig.symbol, sig.side.value, qty, "bracket",
                             pos.client_id, str(order.status))
             self.positions[sig.symbol] = pos
@@ -180,11 +180,19 @@ class ExecutionEngine:
         try:
             # cancel bracket children then flatten; actual fill price/pnl is
             # logged once on_trade_update confirms the fill.
-            self.trading.close_position(symbol)
+            await asyncio.to_thread(self.trading.close_position, symbol)
             self._pending_exits[symbol] = (pos, reason)
         except Exception:
             log.exception("close_position failed for %s", symbol)
             self.positions[symbol] = pos  # broker never closed it — keep tracking
+
+    def has_open_or_pending(self, symbol: str) -> bool:
+        """True if `symbol` has a tracked open position, or a close that was
+        requested but not yet confirmed by the trade-updates stream. Used to
+        block re-entry until the prior close is reconciled — otherwise a new
+        position could be opened while the old one's fill is still in flight,
+        and _pending_exits (one slot per symbol) would lose the earlier trade."""
+        return symbol in self.positions or symbol in self._pending_exits
 
     async def flatten_all(self, reason: str = "eod_flatten"):
         for symbol in list(self.positions):
@@ -192,7 +200,7 @@ class ExecutionEngine:
             await self.close_position(symbol, pos.entry, reason)
         if not self.dry_run:
             try:
-                self.trading.cancel_orders()
+                await asyncio.to_thread(self.trading.cancel_orders)
             except Exception:
                 log.exception("cancel_orders failed")
 
