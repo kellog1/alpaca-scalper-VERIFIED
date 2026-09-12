@@ -87,17 +87,9 @@ On restart, the bot re-syncs open positions from the Alpaca API, so a crash mid-
 
 **Backtesting note:** this session's backtests (see `IMPROVEMENTS.md` for details) found the live breakout strategy net-negative after transaction costs across every parameter variant tried, and the mean-reversion sketch net-negative even before costs. A separate daily-bar swing-breakout idea (`backtest_swing.py`) showed a positive, if unproven, result — see `IMPROVEMENTS.md`.
 
-## Webull AI-infrastructure swing agent (separate from the Alpaca bot above)
+## Webull AI-infrastructure swing agent (moved to its own repo)
 
-`webull_swing/` is a decision-support tool for a small **Webull cash account**, unrelated to the Alpaca scalper — different broker, different style (daily-bar swing, not intraday scalping), different automation model (propose-and-approve, not autonomous).
-
-- **Watchlist:** NVDA, AVGO, VRT, ANET, MU — full-stack AI infrastructure (compute, datacenter power/cooling, networking, memory), deliberately short so each position stays large enough to be worth the spread on a small account.
-- **Entry signal** (`webull_swing/signals.py`): close breaks the prior 20-day high, above the 50-day EMA, with volume > 1.5x its 20-day average.
-- **Exit:** ATR-based stop (1.5x ATR) and target (3x ATR), or a 20-trading-day time exit.
-- **Sizing** (`webull_swing/risk.py`): risks ~2% of *settled* cash per trade (never unsettled cash, to respect cash-account T+1 settlement), capped at 3 concurrent positions.
-- **State** (`webull_swing/state.json`, committed to git so it survives a container restart between daily runs): tracks open positions; only updated via `agent.record_fill()` once a trade is actually confirmed filled — nothing here talks to Webull directly. Commit and push it after any change.
-
-This package contains **no broker I/O and no scheduler** — it's pure logic over bars/cash you supply. The actual workflow is: ask Claude (in a session with the Webull MCP connector) to run a screen, which fetches bars via `get_stock_bars` and account balance via `get_account_balance`, calls `webull_swing.agent.screen()`, and presents any proposed entries/exits for approval. Even an approved trade only creates an instruction via Webull's `place_stock_instruction` — Webull itself then requires you to confirm it in the app before it becomes a real order, so nothing executes without two separate green-lights (yours in chat, then yours again in Webull).
+The Webull swing-trade screener that used to live here as `webull_swing/` has moved to its own repository: **[webull-ai-infra-swing](https://github.com/kellog1/webull-ai-infra-swing)**. It's a different broker (Webull, not Alpaca), a different style (daily-bar swing, not intraday scalping), and a different automation model (propose-and-approve, not autonomous) — separate enough that it didn't belong bundled with this scalper bot. See that repo's README for the strategy, sizing, and workflow.
 
 ## ⚠️ Warnings — read this
 
