@@ -3,4 +3,3 @@ __pycache__/
 *.pyc
 .env
 scalper_log.db
-webull_swing/state.json

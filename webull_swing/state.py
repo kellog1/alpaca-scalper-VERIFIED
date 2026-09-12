@@ -2,6 +2,8 @@
 
 This is local bookkeeping only, not a source of truth - it should always be
 reconciled against what actually filled in Webull (see agent.record_fill).
+Committed to git (not gitignored) rather than left as an ephemeral file,
+so position tracking survives a container restart between scheduled runs.
 """
 import json
 from pathlib import Path
