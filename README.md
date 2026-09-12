@@ -37,6 +37,15 @@ python backtest.py --days 10
 
 Note: `backtest.py` has a `USE_MEAN_REVERSION` flag near the top. It defaults to testing the mean-reversion sketch (see Strategy note below) rather than the breakout strategy `main.py` actually runs live — set it to `False` to backtest what's live. There's also `backtest_swing.py`, a separate daily-bar swing-breakout backtest (see below).
 
+`backtest.py` defaults to pulling history from Alpaca. Pass `--source tradingview` to pull it from TradingView instead, via `scalper/tv_history.py`:
+
+```bash
+pip install git+https://github.com/rongardF/tvdatafeed.git   # not a default dependency
+python backtest.py --days 10 --source tradingview
+```
+
+This uses [tvDatafeed](https://github.com/rongardF/tvdatafeed), an **unofficial, third-party** client that reads chart data off TradingView's internal websocket API — it is not an official TradingView product, has no SLA, and can break if TradingView changes that protocol. Anonymous access is capped at ~5000 bars per symbol; set `TV_USERNAME` / `TV_PASSWORD` in `.env` for a TradingView account with broader history. Treat it as a convenience alt-source for backtesting, never as a live trading feed.
+
 4. Watch signals without placing orders:
 
 ```bash

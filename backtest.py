@@ -1,8 +1,11 @@
-"""Backtest the strategy on historical 1-minute bars from Alpaca.
+"""Backtest the strategy on historical 1-minute bars from Alpaca (default)
+or TradingView (--source tradingview, an unofficial third-party feed - see
+scalper/tv_history.py).
 
 Usage:
     python backtest.py --days 10
     python backtest.py --start 2026-06-01 --end 2026-07-01
+    python backtest.py --days 10 --source tradingview
 
 Caveats (read these): this replays 1-min bars against a strategy designed for
 30-second bars, fills at bar close with zero slippage or commission modeling,
@@ -206,29 +209,14 @@ def print_report(start_equity, equity, trades):
     print("=" * 56)
 
 
-def main():
+def _fetch_alpaca_bars(cfg, start, end):
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
     from alpaca.data.timeframe import TimeFrame
     from alpaca.data.enums import DataFeed
 
-    p = argparse.ArgumentParser()
-    p.add_argument("--config", default="config.yaml")
-    p.add_argument("--days", type=int, default=10)
-    p.add_argument("--start")
-    p.add_argument("--end")
-    args = p.parse_args()
-
-    cfg = load_config(args.config).raw
     creds = load_credentials()
     client = StockHistoricalDataClient(creds.api_key, creds.secret_key)
-
-    end = datetime.fromisoformat(args.end) if args.end else datetime.now(timezone.utc)
-    start = datetime.fromisoformat(args.start) if args.start \
-        else end - timedelta(days=args.days)
-
-    print(f"Fetching 1-min bars {start.date()} → {end.date()} "
-          f"for {len(cfg['symbols'])} symbols...")
     req = StockBarsRequest(symbol_or_symbols=cfg["symbols"],
                            timeframe=TimeFrame.Minute, start=start, end=end,
                            feed=DataFeed.IEX)
@@ -243,7 +231,48 @@ def main():
              "low": b.low, "close": b.close, "volume": b.volume}
             for b in data.data[sym]
         ]
-        print(f"  {sym}: {len(bars_by_symbol[sym])} bars")
+    return bars_by_symbol
+
+
+def _fetch_tradingview_bars(cfg, start, end):
+    from scalper.tv_history import fetch_history
+
+    days_span = max(1, (end - start).days)
+    n_bars = min(5000, days_span * 390 + 50)  # ~390 1-min bars/trading day
+    bars_by_symbol = fetch_history(cfg["symbols"], timeframe_seconds=60, n_bars=n_bars)
+    return {
+        sym: [b for b in bars if start <= b["ts"] <= end]
+        for sym, bars in bars_by_symbol.items()
+    }
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", default="config.yaml")
+    p.add_argument("--days", type=int, default=10)
+    p.add_argument("--start")
+    p.add_argument("--end")
+    p.add_argument("--source", choices=["alpaca", "tradingview"], default="alpaca",
+                   help="Historical data source. tradingview is an unofficial "
+                        "third-party feed - see scalper/tv_history.py.")
+    args = p.parse_args()
+
+    cfg = load_config(args.config).raw
+
+    end = datetime.fromisoformat(args.end) if args.end else datetime.now(timezone.utc)
+    start = datetime.fromisoformat(args.start) if args.start \
+        else end - timedelta(days=args.days)
+
+    print(f"Fetching 1-min bars {start.date()} → {end.date()} "
+          f"for {len(cfg['symbols'])} symbols via {args.source}...")
+
+    if args.source == "tradingview":
+        bars_by_symbol = _fetch_tradingview_bars(cfg, start, end)
+    else:
+        bars_by_symbol = _fetch_alpaca_bars(cfg, start, end)
+
+    for sym, bars in bars_by_symbol.items():
+        print(f"  {sym}: {len(bars)} bars")
 
     equity, trades = run_backtest(cfg, bars_by_symbol)
     print_report(100_000.0, equity, trades)
