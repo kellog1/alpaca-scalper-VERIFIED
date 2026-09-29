@@ -1,0 +1,44 @@
+name: Daily baseline pipeline
+
+on:
+  schedule:
+    # 12:52 UTC = ~7:52am US Central during daylight time (drifts 1hr around
+    # DST changes — adjust if that matters to you). Runs weekdays only.
+    - cron: "52 12 * * 1-5"
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
+
+permissions:
+  contents: write   # needed to commit the updated pipeline_log.csv back
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: baseline_pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily pipeline
+        env:
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+          # Keep this "true" until you've watched several runs and trust
+          # the output. Flip the repo variable (not secret) to go live.
+          RUN_DAILY_DRY_RUN: ${{ vars.RUN_DAILY_DRY_RUN || 'true' }}
+        run: python run_daily.py
+
+      - name: Commit updated logs
+        run: |
+          git config user.name "trading-bot"
+          git config user.email "actions@github.com"
+          git add data/pipeline_log.csv data/order_submission_log.csv 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "Update pipeline logs"
+          git push
