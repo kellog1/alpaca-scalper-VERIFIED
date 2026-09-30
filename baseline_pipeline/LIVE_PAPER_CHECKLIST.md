@@ -7,7 +7,7 @@ submit orders.
 ## Before flipping the switch
 - [ ] At least 3 to 5 weekday cron dry-runs with sane output: 5 targets, no surprises in `data/pipeline_log.csv`.
 - [ ] Alpaca keys are for the **paper** account (the client is hardcoded to `paper-api.alpaca.markets`).
-- [ ] Decide whether the intraday scalper shares this account. The pipeline ignores its positions but not its buying-power use.
+- [ ] Account sharing: prefer a separate paper account. If the intraday scalper shares it, confirm `reserved_symbols` in `config.yaml` lists the pipeline basket, so the scalper skips those names, ignores other positions on re-sync, and cancels only its own orders at EOD. Caveats that remain: shared buying power, and the scalper's daily-loss halt / profit lock read whole-account equity, so pipeline P&L can trigger them.
 - [ ] Run during US market hours, not the 12:52 UTC cron (before the open, market orders queue until it opens). Do the first run manually at midday while watching.
 - [ ] Log-commit push to `main` still works (a rejected push fails the run after orders are sent).
 - [ ] No stray open orders in the Alpaca dashboard.

@@ -13,6 +13,16 @@ symbols:
   - SPY
   - QQQ
 
+# Symbols owned by another strategy on the same account (baseline_pipeline's
+# basket). The scalper skips them entirely: no trading, no position re-sync,
+# no order cancels. Remove this only if the pipeline uses a separate account.
+reserved_symbols:
+  - SPY
+  - QQQ
+  - AAPL
+  - MSFT
+  - NVDA
+
 bars:
   timeframe_seconds: 30        # aggregate ticks into 30-second bars
   lookback_bars: 60            # bars kept in memory per symbol

@@ -29,6 +29,17 @@ class Config:
             raise AttributeError(item) from e
 
 
+def tradable_symbols(raw: dict) -> list[str]:
+    """Configured symbols minus `reserved_symbols`.
+
+    Reserved symbols belong to another strategy sharing the account (the
+    baseline pipeline's basket). The scalper never streams, trades, adopts or
+    cancels orders for them.
+    """
+    reserved = {s.upper() for s in raw.get("reserved_symbols") or []}
+    return [s for s in raw["symbols"] if s.upper() not in reserved]
+
+
 def load_credentials() -> Credentials:
     load_dotenv()
     key = os.getenv("ALPACA_API_KEY")

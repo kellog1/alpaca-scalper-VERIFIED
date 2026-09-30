@@ -17,12 +17,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, TradeEvent
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, TradeEvent, QueryOrderStatus
 from alpaca.trading.requests import (
     MarketOrderRequest, TakeProfitRequest, StopLossRequest,
     ReplaceOrderRequest, GetOrdersRequest,
 )
 
+from .config import tradable_symbols
 from .signals import Signal, Side
 from .logger import TradeLogger
 
@@ -46,6 +47,11 @@ class RateLimiter:
         self.stamps.append(time_mod.monotonic())
 
 
+# Tags every order this bot places, so it can tell its own orders from those of
+# other strategies sharing the account.
+CLIENT_ID_PREFIX = "scalper-"
+
+
 @dataclass
 class OpenPosition:
     symbol: str
@@ -60,7 +66,7 @@ class OpenPosition:
     trail_armed: bool = False
     trail_stop: float | None = None
     stop_order_id: str | None = None
-    client_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    client_id: str = field(default_factory=lambda: CLIENT_ID_PREFIX + uuid.uuid4().hex[:12])
 
 
 class ExecutionEngine:
@@ -79,6 +85,7 @@ class ExecutionEngine:
         self.trail_activate = e["trail_activate_pct"]
         self.trail_by = e["trail_by_pct"]
         self.max_hold = e["max_hold_seconds"]
+        self.symbols = set(tradable_symbols(cfg))   # excludes reserved_symbols
         self.limiter = RateLimiter(cfg["execution"]["order_rate_limit_per_min"])
         self.positions: dict[str, OpenPosition] = {}
         # symbol -> (OpenPosition, reason) for closes awaiting broker fill
@@ -199,10 +206,20 @@ class ExecutionEngine:
             pos = self.positions[symbol]
             await self.close_position(symbol, pos.entry, reason)
         if not self.dry_run:
-            try:
-                await asyncio.to_thread(self.trading.cancel_orders)
-            except Exception:
-                log.exception("cancel_orders failed")
+            await self._cancel_own_orders()
+
+    async def _cancel_own_orders(self):
+        """Cancel open orders for OUR symbols only. Never a blanket cancel:
+        the account may hold other strategies' orders (e.g. pipeline stops)."""
+        try:
+            orders = await asyncio.to_thread(
+                self.trading.get_orders,
+                GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=sorted(self.symbols), limit=500))
+            for o in orders:
+                await self.limiter.acquire()
+                await asyncio.to_thread(self.trading.cancel_order_by_id, o.id)
+        except Exception:
+            log.exception("cancelling own open orders failed")
 
     async def tighten_to_breakeven(self):
         """Profit-lock: move every open stop to entry."""
@@ -248,6 +265,9 @@ class ExecutionEngine:
             return
         try:
             for p in self.trading.get_all_positions():
+                if p.symbol not in self.symbols:
+                    log.info("Re-sync: ignoring %s (not a scalper symbol)", p.symbol)
+                    continue
                 side = Side.LONG if p.side == "long" else Side.SHORT
                 entry = float(p.avg_entry_price)
                 # No bar history survives a restart, so ATR isn't available here;
