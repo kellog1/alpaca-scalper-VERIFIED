@@ -80,9 +80,16 @@ def main():
     account = alpaca_client.get_account()
     equity = float(account["equity"])
     buying_power = float(account["buying_power"])
-    current_positions = alpaca_client.get_positions()
+    all_positions = alpaca_client.get_positions()
+    # Only manage basket symbols: the account may hold positions from other
+    # strategies (e.g. the intraday scalper) that this pipeline must not touch
+    # or count against its own position limits.
+    current_positions = {s: q for s, q in all_positions.items() if s in BASKET}
+    foreign = {s: q for s, q in all_positions.items() if s not in BASKET}
     print(f"  equity=${equity:,.2f}  buying_power=${buying_power:,.2f}  "
-          f"current_positions={current_positions}")
+          f"basket_positions={current_positions}")
+    if foreign:
+        print(f"  ignoring non-basket positions (not managed here): {foreign}")
 
     print("\nComputing target positions (vol-model risk overlay + ATR stops)...")
     targets, detail = build_targets(equity, buying_power, current_positions, price_data=price_data)

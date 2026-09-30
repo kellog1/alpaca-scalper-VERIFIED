@@ -39,6 +39,6 @@ jobs:
         run: |
           git config user.name "trading-bot"
           git config user.email "actions@github.com"
-          git add data/pipeline_log.csv data/order_submission_log.csv 2>/dev/null || true
+          git add -A data
           git diff --staged --quiet || git commit -m "Update pipeline logs"
           git push
