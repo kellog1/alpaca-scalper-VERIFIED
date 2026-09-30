@@ -11,7 +11,7 @@ from datetime import datetime
 from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 
-from .config import Config, Credentials
+from .config import Config, Credentials, tradable_symbols
 from .datastream import DataStream
 from .execution import ExecutionEngine
 from .logger import TradeLogger
@@ -30,9 +30,13 @@ class ScalperBot:
         self.signals = SignalEngine(self.cfg)
         self.risk = RiskManager(self.cfg)
         self.exec = ExecutionEngine(self.trading, self.cfg, self.tlog, self.dry_run)
+        self.symbols = tradable_symbols(self.cfg)
+        skipped = [x for x in self.cfg["symbols"] if x not in self.symbols]
+        if skipped:
+            log.warning("Skipping reserved symbols (owned by another strategy): %s", skipped)
         self.stream = DataStream(
             creds.api_key, creds.secret_key,
-            self.cfg["symbols"], self.cfg["bars"]["timeframe_seconds"],
+            self.symbols, self.cfg["bars"]["timeframe_seconds"],
             on_bar=self.on_bar, on_tick=self.exec.on_price,
         )
         self._flattened_today = False
