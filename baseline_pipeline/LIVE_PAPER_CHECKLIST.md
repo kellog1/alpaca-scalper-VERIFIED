@@ -24,7 +24,7 @@ submit orders.
 - [ ] Each stop leg is open: type stop, side sell, at the logged stop price, qty = position.
 - [ ] Stops are still open the next morning (did not expire at the close).
 - [ ] Non-basket positions (ARE, MPC, WBD, WDAY) unchanged, no orders sent for them.
-- [ ] Sizing: ~$9-10k per name (~10% of equity), risk to stop ~1% of equity or less per name.
+- [ ] Sizing: risk to stop is at most ~0.5% of equity per name (less after the vol overlay), `capped_by` in the log is `risk` for most names (a tight-stop name like SPY may show `max_position_pct`, cap 20%), and gross exposure is roughly 60% of equity, never above 100%.
 - [ ] `data/order_submission_log.csv` committed.
 
 ## Next day (manual run, still dry-run)
