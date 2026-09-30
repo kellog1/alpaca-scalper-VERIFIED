@@ -71,13 +71,21 @@ def replace_order(order_id: str, qty: int, stop_price: float) -> dict:
     return {"order_id": order_id, "status": r.status_code, **({"error": r.text} if r.status_code >= 400 else {})}
 
 
-def get_fills(since_iso: str | None = None, limit: int = 100) -> list[dict]:
-    params = {"activity_types": "FILL", "page_size": limit}
+def get_fills(since_iso: str | None = None, limit: int = 100, max_pages: int = 20) -> list[dict]:
+    """FILL activities, oldest-first, following Alpaca's page_token pagination."""
+    params = {"activity_types": "FILL", "page_size": limit, "direction": "asc"}
     if since_iso:
         params["after"] = since_iso
-    r = requests.get(f"{TRADING_BASE_URL}/account/activities/FILL", headers=_headers(), params=params, timeout=15)
-    r.raise_for_status()
-    return r.json()
+    out: list[dict] = []
+    for _ in range(max_pages):
+        r = requests.get(f"{TRADING_BASE_URL}/account/activities/FILL", headers=_headers(), params=params, timeout=15)
+        r.raise_for_status()
+        page = r.json()
+        out.extend(page)
+        if len(page) < limit:
+            break
+        params["page_token"] = page[-1]["id"]
+    return out
 
 
 def submit_order(payload: dict) -> dict:

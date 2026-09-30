@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write   # needed to commit the updated pipeline_log.csv back
 
+concurrency:
+  group: baseline-logs   # shared with daily-analytics so log pushes don't race
+  cancel-in-progress: false
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
