@@ -72,13 +72,19 @@ class OrderIntent:
     reason: str
 
 
+REBALANCE_TOLERANCE = 0.20   # don't resize a held position unless it is >20% off target
+
+
 def reconcile_positions(
     current_positions: dict,     # symbol -> current qty (0 if none)
     target_positions: dict,      # symbol -> {"qty": int, "stop_price": float|None}
+    rebalance_tolerance: float = REBALANCE_TOLERANCE,
 ) -> list[OrderIntent]:
     """
     Diffs current vs. target and returns the minimal set of orders needed
-    to get there. Pure function — takes plain dicts, no API calls, so it
+    to get there. Opens and closes always happen; resizing an already-held
+    position only happens when it is more than `rebalance_tolerance` off
+    target, so daily price/ATR drift doesn't trigger constant market orders. Pure function — takes plain dicts, no API calls, so it
     can be unit-tested and reasoned about before anything touches a live
     (even paper) account.
     """
@@ -95,6 +101,9 @@ def reconcile_positions(
         if delta == 0:
             continue
 
+        if current_qty > 0 and target_qty > 0 and abs(delta) / target_qty <= rebalance_tolerance:
+            continue
+
         if current_qty == 0 and target_qty > 0:
             intents.append(OrderIntent(symbol, "open_long", delta, "buy", stop_price, "new target position"))
         elif current_qty > 0 and target_qty == 0:
@@ -105,6 +114,78 @@ def reconcile_positions(
             intents.append(OrderIntent(symbol, "reduce", abs(delta), "sell", None, "decreasing toward target"))
 
     return intents
+
+
+STOP_RATCHET_MIN = 0.005   # only raise an existing stop if the new one is >0.5% higher
+
+
+def build_stop_payload(symbol: str, qty: int, stop_price: float) -> dict:
+    """Standalone protective sell-stop (GTC) for shares already held."""
+    if qty <= 0:
+        raise ValueError("qty must be positive")
+    return {
+        "symbol": symbol, "qty": str(int(qty)), "side": "sell", "type": "stop",
+        "stop_price": str(round(stop_price, 2)), "time_in_force": "gtc",
+    }
+
+
+def plan_stop_actions(
+    current_positions: dict,     # symbol -> signed qty (basket only)
+    target_positions: dict,      # symbol -> {"qty": int, "stop_price": float}
+    open_orders: list[dict],     # Alpaca open orders (raw dicts)
+) -> list[dict]:
+    """
+    Keeps every held long protected by exactly one stop that matches the
+    position size (or the target size when reducing), and ratchets it up
+    with the ATR stop but never lowers it. Pure function; all actions apply
+    to shares already held, so they can run before any market orders.
+
+    Actions: {"action": "place"|"replace"|"cancel", "symbol", ...}
+      place   -> payload
+      replace -> order_id, qty, stop_price   (PATCH an existing order)
+      cancel  -> order_id
+    Symbols with no target (being closed) get their stops cancelled so the
+    closing sell isn't blocked by shares held for a stop.
+    """
+    actions: list[dict] = []
+    for sym, qty in sorted(current_positions.items()):
+        if qty <= 0:
+            continue
+        stops = [o for o in open_orders
+                 if o.get("symbol") == sym and o.get("type") == "stop" and o.get("side") == "sell"]
+        target = target_positions.get(sym)
+
+        if target is None:
+            for o in stops:
+                actions.append({"action": "cancel", "symbol": sym, "order_id": o["id"],
+                                "reason": "position being closed"})
+            continue
+
+        want_qty = int(min(qty, target["qty"]))
+        new_stop = round(float(target["stop_price"]), 2)
+        cur_stop = max((float(o["stop_price"]) for o in stops), default=None)
+        stop_price = new_stop if cur_stop is None else max(new_stop, cur_stop)  # never lower
+
+        if not stops:
+            actions.append({"action": "place", "symbol": sym,
+                            "payload": build_stop_payload(sym, want_qty, stop_price),
+                            "reason": "held position has no stop"})
+        elif len(stops) == 1:
+            o = stops[0]
+            qty_ok = int(float(o["qty"])) == want_qty
+            raise_ok = new_stop > float(o["stop_price"]) * (1 + STOP_RATCHET_MIN)
+            if not qty_ok or raise_ok:
+                actions.append({"action": "replace", "symbol": sym, "order_id": o["id"],
+                                "qty": want_qty, "stop_price": stop_price,
+                                "reason": "resize stop to position" if not qty_ok else "ratchet stop up"})
+        else:
+            for o in stops:
+                actions.append({"action": "cancel", "symbol": sym, "order_id": o["id"],
+                                "reason": "consolidating multiple stops"})
+            actions.append({"action": "place", "symbol": sym,
+                            "payload": build_stop_payload(sym, want_qty, stop_price),
+                            "reason": "single consolidated stop"})
+    return actions
 
 
 def intents_to_payloads(intents: list[OrderIntent]) -> list[dict]:

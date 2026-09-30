@@ -53,6 +53,24 @@ def get_positions() -> dict:
     return {p["symbol"]: float(p["qty"]) for p in r.json()}
 
 
+def get_open_orders() -> list[dict]:
+    r = requests.get(f"{TRADING_BASE_URL}/orders", headers=_headers(),
+                     params={"status": "open", "limit": 500, "nested": "false"}, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
+def cancel_order(order_id: str) -> dict:
+    r = requests.delete(f"{TRADING_BASE_URL}/orders/{order_id}", headers=_headers(), timeout=15)
+    return {"order_id": order_id, "status": r.status_code, **({"error": r.text} if r.status_code >= 400 else {})}
+
+
+def replace_order(order_id: str, qty: int, stop_price: float) -> dict:
+    body = {"qty": str(int(qty)), "stop_price": str(round(stop_price, 2))}
+    r = requests.patch(f"{TRADING_BASE_URL}/orders/{order_id}", headers=_headers(), json=body, timeout=15)
+    return {"order_id": order_id, "status": r.status_code, **({"error": r.text} if r.status_code >= 400 else {})}
+
+
 def get_fills(since_iso: str | None = None, limit: int = 100) -> list[dict]:
     params = {"activity_types": "FILL", "page_size": limit}
     if since_iso:
