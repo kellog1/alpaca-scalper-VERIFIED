@@ -44,13 +44,14 @@ WHAT IT DOES NOT DO:
 from __future__ import annotations
 import os
 import sys
+import time
 from datetime import datetime, timezone
 import pandas as pd
 
 import alpaca_client
 from baseline_pipeline import build_targets, log_run, BASKET, PIPELINE_LOG_PATH
 from ml_ensemble_vol import SYMBOLS as VOL_TRAIN_SYMBOLS, REFERENCE
-from order_router import reconcile_positions, intents_to_payloads
+from order_router import reconcile_positions, intents_to_payloads, plan_stop_actions
 
 DRY_RUN = os.environ.get("RUN_DAILY_DRY_RUN", "true").lower() != "false"
 ORDER_LOG_PATH = "data/order_submission_log.csv"
@@ -62,6 +63,29 @@ def log_submission(results: list[dict], run_ts: str) -> None:
     os.makedirs(os.path.dirname(ORDER_LOG_PATH) or ".", exist_ok=True)
     write_header = not os.path.exists(ORDER_LOG_PATH)
     out.to_csv(ORDER_LOG_PATH, mode="a", header=write_header, index=False)
+
+
+def apply_stop_actions(actions: list[dict]) -> None:
+    cancelled = False   # any cancel/replace needs settle time before dependent orders
+    for a in actions:
+        if a["action"] == "cancel":
+            res = alpaca_client.cancel_order(a["order_id"])
+            cancelled = True
+        elif a["action"] == "replace":
+            res = alpaca_client.replace_order(a["order_id"], a["qty"], a["stop_price"])
+            cancelled = True
+        else:  # place: cancels are async, so retry briefly if shares are still held
+            if cancelled:
+                time.sleep(2)
+            for attempt in range(4):
+                res = alpaca_client.submit_order(a["payload"])
+                if res["status"] < 400:
+                    break
+                time.sleep(2 * (attempt + 1))
+        print(f"  {a['action']} {a['symbol']}: status={res['status']}"
+              + (f" error={res['error']}" if "error" in res else ""))
+    if cancelled:
+        time.sleep(2)   # let cancels/replaces settle before any closing/reducing sells
 
 
 def main():
@@ -98,6 +122,17 @@ def main():
     log_run(detail, run_ts=run_ts)
 
     intents = reconcile_positions(current_positions, targets)
+
+    # Stop maintenance for shares already held (runs before any market orders,
+    # so a closing sell isn't blocked by shares held for a stop).
+    open_orders = alpaca_client.get_open_orders()
+    stop_actions = plan_stop_actions(current_positions, targets, open_orders)
+    print(f"\n{len(stop_actions)} stop action(s) on held positions:")
+    for a in stop_actions:
+        print(f"  {a['action']} {a['symbol']}: {a.get('payload') or {k: a[k] for k in ('order_id', 'qty', 'stop_price') if k in a}} — {a['reason']}")
+    if stop_actions and not DRY_RUN:
+        apply_stop_actions(stop_actions)
+
     if not intents:
         print("\nNo orders needed — current positions already match targets.")
         return
