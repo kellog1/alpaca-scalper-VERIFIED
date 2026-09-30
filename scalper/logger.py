@@ -79,6 +79,12 @@ class TradeLogger:
                            pnl, hold, exit_reason))
         self.conn.commit()
 
+    def realized_pnl_since(self, since_iso: str) -> float:
+        """Sum of closed-trade P&L (this bot's trades only) closed at/after `since_iso`."""
+        cur = self.conn.execute(
+            "SELECT COALESCE(SUM(pnl), 0) FROM trades WHERE close_ts >= ?", (since_iso,))
+        return float(cur.fetchone()[0])
+
     # ---- end-of-day report ----------------------------------------------
     def eod_report(self) -> str:
         cur = self.conn.execute(

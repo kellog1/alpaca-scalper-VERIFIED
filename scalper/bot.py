@@ -6,7 +6,7 @@ transitions, EOD flatten, and the profit lock.
 """
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, time, timezone
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
@@ -42,6 +42,7 @@ class ScalperBot:
         self._flattened_today = False
         self._eod_reported = False
         self._current_day = None
+        self._day_start_ts = None   # UTC ISO of local midnight; bounds today's realized P&L
 
         # Reconciles broker-side bracket TP/SL fills, which the price-tick
         # loop never sees (see ExecutionEngine.on_trade_update).
@@ -59,6 +60,17 @@ class ScalperBot:
     def _open_position_value(self) -> float:
         return sum(p.qty * p.entry for p in self.exec.positions.values())
 
+    def _mark_day_start(self, day):
+        self._current_day = day
+        self._day_start_ts = (datetime.combine(day, time(0), tzinfo=self.risk.tz)
+                              .astimezone(timezone.utc).isoformat())
+
+    def _strategy_pnl(self) -> float:
+        """Today's P&L from this bot's own trades (realized + open), not whole-account
+        equity, so other strategies sharing the account don't trip halt/profit lock."""
+        return (self.tlog.realized_pnl_since(self._day_start_ts)
+                + self.exec.unrealized_pnl())
+
     # ---- daily lifecycle ---------------------------------------------------
     async def _check_day_rollover(self):
         """Re-arm daily state (loss halt, profit lock, EOD flatten/report) on
@@ -68,7 +80,7 @@ class ScalperBot:
         day = datetime.now(self.risk.tz).date()
         if day == self._current_day:
             return
-        self._current_day = day
+        self._mark_day_start(day)
         acct = await self._account()
         self.risk.start_of_day(float(acct.equity))
         self._flattened_today = False
@@ -133,8 +145,7 @@ class ScalperBot:
         while True:
             try:
                 await self._check_day_rollover()
-                acct = await self._account()
-                state = self.risk.check_daily_limits(float(acct.equity))
+                state = self.risk.check_daily_pnl(self._strategy_pnl())
                 if state["halt"] and self.exec.positions:
                     await self.exec.flatten_all("daily_loss_halt")
                 if state["lock_profits"]:
@@ -151,7 +162,7 @@ class ScalperBot:
     # ---- entrypoint -----------------------------------------------------------------
     async def run(self):
         acct = await self._account()
-        self._current_day = datetime.now(self.risk.tz).date()
+        self._mark_day_start(datetime.now(self.risk.tz).date())
         self.risk.start_of_day(float(acct.equity))
         self.exec.resync()
         mode = "DRY RUN" if self.dry_run else "PAPER TRADING"
