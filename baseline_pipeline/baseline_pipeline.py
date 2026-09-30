@@ -92,14 +92,10 @@ def build_targets(equity: float, buying_power: float, current_positions: dict, p
     ref_df = _get(REFERENCE)
 
     pc = PortfolioConstraints(max_positions=len(BASKET), max_symbol_weight=MAX_POSITION_PCT)
-    for sym, qty in current_positions.items():
-        if qty:
-            # approximate dollars from qty using latest close, for the weight check
-            try:
-                px = _get(sym)["close"].iloc[-1]
-                pc.register_fill(sym, qty * px)
-            except (FileNotFoundError, KeyError):
-                pass
+    # Targets are FULL desired holdings, not increments, so constraints are
+    # evaluated on a fresh portfolio. Pre-registering current positions would
+    # double-count them and make held names fail the weight/count checks,
+    # flipping their target to zero and closing them.
 
     targets = {}
     detail_rows = []
