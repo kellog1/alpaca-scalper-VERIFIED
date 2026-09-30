@@ -33,8 +33,12 @@ from order_router import reconcile_positions, intents_to_payloads, get_positions
 from ml_ensemble_vol import SYMBOLS as VOL_TRAIN_SYMBOLS, REFERENCE, build_vol_label
 
 BASKET = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA"]
-BASE_RISK_PCT = 0.01          # 1% of equity risked per name, before vol adjustment
-MAX_POSITION_PCT = 0.10       # no single name over 10% of equity
+# Sizing is meant to be RISK-bound so the vol overlay (which scales the risk
+# budget) actually changes share counts. With 1% base risk and a 10% cap, the
+# cap bound every name and the overlay was inert (see first dry-run logs).
+# 5 names x 20% cap = at most 100% gross, i.e. still no leverage.
+BASE_RISK_PCT = 0.005         # 0.5% of equity risked per name, before vol adjustment
+MAX_POSITION_PCT = 0.20       # no single name over 20% of equity
 
 
 def _load(symbol: str) -> pd.DataFrame:
@@ -127,6 +131,7 @@ def build_targets(equity: float, buying_power: float, current_positions: dict, p
             "symbol": sym, "entry": entry_price, "stop": stop["stop_price"],
             "vol_expansion_proba": round(vol_proba, 3), "adj_risk_pct": round(adj_risk_pct, 4),
             "shares": sized["shares"], "position_dollars": sized["position_dollars"],
+            "capped_by": sized["capped_by"],
             "allowed": check["allowed"], "reason": check.get("reason"),
         })
 
@@ -138,6 +143,21 @@ def build_targets(equity: float, buying_power: float, current_positions: dict, p
 
 
 PIPELINE_LOG_PATH = "data/pipeline_log.csv"
+
+
+def _migrate_log_columns(new_columns: list[str]) -> None:
+    """Appending rows with a new column to an existing CSV would corrupt it, so
+    add missing columns first. Rows logged before `capped_by` existed were all
+    bound by the position cap (verified from their sizing), so back-fill that."""
+    if not os.path.exists(PIPELINE_LOG_PATH):
+        return
+    old = pd.read_csv(PIPELINE_LOG_PATH)
+    missing = [c for c in new_columns if c not in old.columns]
+    if not missing:
+        return
+    for c in missing:
+        old[c] = "max_position_pct" if c == "capped_by" else None
+    old.to_csv(PIPELINE_LOG_PATH, index=False)
 
 
 def log_run(detail: pd.DataFrame, run_ts: str | None = None) -> None:
@@ -155,7 +175,10 @@ def log_run(detail: pd.DataFrame, run_ts: str | None = None) -> None:
     out = detail.copy()
     out.insert(0, "run_ts", run_ts)
     os.makedirs(os.path.dirname(PIPELINE_LOG_PATH) or ".", exist_ok=True)
+    _migrate_log_columns(list(out.columns))
     write_header = not os.path.exists(PIPELINE_LOG_PATH)
+    if not write_header:   # align appended rows with the file's header, whatever order/subset this run has
+        out = out.reindex(columns=list(pd.read_csv(PIPELINE_LOG_PATH, nrows=0).columns))
     out.to_csv(PIPELINE_LOG_PATH, mode="a", header=write_header, index=False)
 
 
