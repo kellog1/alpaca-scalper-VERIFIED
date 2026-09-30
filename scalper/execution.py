@@ -88,6 +88,7 @@ class ExecutionEngine:
         self.symbols = set(tradable_symbols(cfg))   # excludes reserved_symbols
         self.limiter = RateLimiter(cfg["execution"]["order_rate_limit_per_min"])
         self.positions: dict[str, OpenPosition] = {}
+        self.last_price: dict[str, float] = {}   # latest price for our open positions
         # symbol -> (OpenPosition, reason) for closes awaiting broker fill
         # confirmation via on_trade_update, so logged P&L reflects the real
         # fill price instead of the price at the moment we decided to exit.
@@ -147,6 +148,7 @@ class ExecutionEngine:
         pos = self.positions.get(symbol)
         if not pos:
             return
+        self.last_price[symbol] = price
 
         # time-based exit
         held = (datetime.now(timezone.utc) - pos.opened_at).total_seconds()
@@ -220,6 +222,15 @@ class ExecutionEngine:
                 await asyncio.to_thread(self.trading.cancel_order_by_id, o.id)
         except Exception:
             log.exception("cancelling own open orders failed")
+
+    def unrealized_pnl(self) -> float:
+        """Open P&L on THIS bot's positions only, at the latest seen prices
+        (entry price until a tick arrives, i.e. zero)."""
+        total = 0.0
+        for sym, pos in self.positions.items():
+            px = self.last_price.get(sym, pos.entry)
+            total += ((px - pos.entry) if pos.side == Side.LONG else (pos.entry - px)) * pos.qty
+        return total
 
     async def tighten_to_breakeven(self):
         """Profit-lock: move every open stop to entry."""
