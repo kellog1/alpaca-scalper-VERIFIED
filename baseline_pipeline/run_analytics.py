@@ -6,8 +6,10 @@ and get_daily_bars(). Safe to run unattended (see .github/workflows/
 daily-analytics.yml). Produces numbers only; per the "no reactive daily
 tuning" decision, any parameter change is a separate, deliberate decision.
 
-Fills are restricted to BASKET symbols, so other strategies sharing the
-account (e.g. the intraday scalper) don't pollute the numbers.
+Fills are restricted to BASKET symbols AND to fills at/after the first
+pipeline log row. The account also holds older fills from the intraday
+scalper (it traded SPY/QQQ/NVDA before they were reserved for this
+pipeline); activity records carry no strategy tag, so time is the cutoff.
 
 Output: printed to stdout and written to data/analytics_report.md.
 """
@@ -33,9 +35,21 @@ def _table(df: pd.DataFrame) -> str:
     return "```\n" + df.to_string(index=False) + "\n```" if len(df) else "_No data yet._"
 
 
-def build_report(fills: pd.DataFrame, log: pd.DataFrame, price_loader) -> str:
+def select_pipeline_fills(fills: pd.DataFrame, log: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Basket fills at/after the first pipeline run. Returns (fills, n_excluded_earlier)."""
+    if fills.empty:
+        return fills, 0
+    basket = fills[fills["symbol"].isin(BASKET)]
+    since = log["run_ts"].min()
+    keep = basket[basket["filled_at"] >= since].reset_index(drop=True)
+    return keep, len(basket) - len(keep)
+
+
+def build_report(fills: pd.DataFrame, log: pd.DataFrame, price_loader, excluded: int = 0) -> str:
     parts = [f"# Trade analytics — {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC\n",
-             f"Pipeline log rows: {len(log)} | basket fills: {len(fills)}\n"]
+             f"Pipeline log rows: {len(log)} | pipeline fills: {len(fills)} "
+             f"(excluded {excluded} earlier basket-symbol fills from before the first pipeline run "
+             f"{log['run_ts'].min():%Y-%m-%d %H:%M} UTC)\n"]
 
     if fills.empty:
         parts.append(_section("Fills", "_No basket fills yet — slippage, stop discipline and P&L "
@@ -79,13 +93,11 @@ def main():
     log = ta.load_pipeline_log()
 
     print("Fetching fills (read-only)...")
-    fills = ta.parse_fills(alpaca_client.get_fills())
-    if len(fills):
-        fills = fills[fills["symbol"].isin(BASKET)].reset_index(drop=True)
+    fills, excluded = select_pipeline_fills(ta.parse_fills(alpaca_client.get_fills()), log)
 
     print("Fetching daily bars for calibration (read-only)...")
     bars = alpaca_client.get_daily_bars(sorted(log["symbol"].unique()))
-    report = build_report(fills, log, lambda sym: bars[sym])
+    report = build_report(fills, log, lambda sym: bars[sym], excluded)
 
     print(report)
     os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
