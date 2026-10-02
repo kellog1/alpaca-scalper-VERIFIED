@@ -51,7 +51,7 @@ import pandas as pd
 import alpaca_client
 from baseline_pipeline import build_targets, log_run, BASKET, PIPELINE_LOG_PATH
 from ml_ensemble_vol import SYMBOLS as VOL_TRAIN_SYMBOLS, REFERENCE
-from order_router import reconcile_positions, intents_to_payloads, plan_stop_actions
+from order_router import reconcile_positions, intents_to_payloads, plan_stop_actions, market_open_check
 
 DRY_RUN = os.environ.get("RUN_DAILY_DRY_RUN", "true").lower() != "false"
 ORDER_LOG_PATH = "data/order_submission_log.csv"
@@ -121,6 +121,19 @@ def main():
     print(detail.to_string(index=False))
     log_run(detail, run_ts=run_ts)
 
+    # Market-open guard. Scheduled GitHub runs can fire hours late, so never
+    # assume the market is open. Live: fail closed (no stop changes, no orders)
+    # when it's closed, near the close, or the clock can't be read. The log
+    # above is still written. Dry-run: just report what the guard would do.
+    try:
+        market_ok, market_reason = market_open_check(alpaca_client.get_clock())
+    except Exception as e:
+        market_ok, market_reason = False, f"market clock request failed ({type(e).__name__}: {e})"
+    print(f"\nMarket guard: {'OK' if market_ok else 'BLOCKED'} — {market_reason}")
+    if not market_ok and not DRY_RUN:
+        print("MARKET GUARD: no stop changes or orders submitted this run.")
+        return
+
     intents = reconcile_positions(current_positions, targets)
 
     # Stop maintenance for shares already held (runs before any market orders,
@@ -143,6 +156,8 @@ def main():
         print(f"  {i.action}: {i.side} {i.qty} {i.symbol} (stop={i.stop_price}) — {i.reason}")
 
     if DRY_RUN:
+        if not market_ok:
+            print("\n(A live run would submit nothing right now: market guard is BLOCKED.)")
         print("\nDRY_RUN=True — NOT submitting orders. Payloads that WOULD be sent:")
         for p in payloads:
             print(f"  {p}")

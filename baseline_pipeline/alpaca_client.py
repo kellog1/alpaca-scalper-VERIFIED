@@ -46,6 +46,13 @@ def get_account() -> dict:
     return r.json()
 
 
+def get_clock() -> dict:
+    """Market clock: {timestamp, is_open, next_open, next_close}."""
+    r = requests.get(f"{TRADING_BASE_URL}/clock", headers=_headers(), timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
 def get_positions() -> dict:
     """Returns {symbol: qty (float, signed)}."""
     r = requests.get(f"{TRADING_BASE_URL}/positions", headers=_headers(), timeout=15)

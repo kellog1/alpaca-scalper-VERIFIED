@@ -21,6 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 
+import pandas as pd
+
 
 # ---------------------------------------------------------------------------
 # Order payload construction (pure — no network calls)
@@ -114,6 +116,28 @@ def reconcile_positions(
             intents.append(OrderIntent(symbol, "reduce", abs(delta), "sell", None, "decreasing toward target"))
 
     return intents
+
+
+MIN_MINUTES_TO_CLOSE = 15   # don't send orders in the last 15 minutes of the session
+
+
+def market_open_check(clock: dict, min_minutes_to_close: float = MIN_MINUTES_TO_CLOSE) -> tuple[bool, str]:
+    """Pure guard on an Alpaca /v2/clock payload: (ok_to_trade, reason).
+
+    Uses the clock's own timestamp so the decision doesn't depend on the local
+    machine's time. Anything malformed or missing fails closed.
+    """
+    try:
+        if not clock.get("is_open"):
+            return False, f"market closed (next open {clock.get('next_open')})"
+        now = pd.Timestamp(clock["timestamp"])
+        close = pd.Timestamp(clock["next_close"])
+        mins = (close - now).total_seconds() / 60
+    except Exception as e:  # missing/garbled fields: fail closed
+        return False, f"could not read market clock ({type(e).__name__}: {e})"
+    if mins < min_minutes_to_close:
+        return False, f"only {mins:.0f} min to close (< {min_minutes_to_close:g})"
+    return True, f"market open, {mins:.0f} min to close"
 
 
 STOP_RATCHET_MIN = 0.005   # only raise an existing stop if the new one is >0.5% higher
