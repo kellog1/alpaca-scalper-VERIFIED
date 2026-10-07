@@ -28,6 +28,7 @@ import pandas as pd
 from xgboost import XGBClassifier
 
 from feature_extractor import extract_features
+from earnings import load_earnings, annotate_earnings
 from risk_manager import position_size, atr_stop, vol_adjusted_risk_pct, PortfolioConstraints
 from order_router import reconcile_positions, intents_to_payloads, get_positions_js_snippet, place_orders_js_snippet
 from ml_ensemble_vol import SYMBOLS as VOL_TRAIN_SYMBOLS, REFERENCE, build_vol_label
@@ -139,7 +140,11 @@ def build_targets(equity: float, buying_power: float, current_positions: dict, p
             targets[sym] = {"qty": sized["shares"], "stop_price": stop["stop_price"]}
             pc.register_fill(sym, sized["position_dollars"])
 
-    return targets, pd.DataFrame(detail_rows)
+    detail_df = pd.DataFrame(detail_rows)
+    detail_df, earnings_notes = annotate_earnings(detail_df, load_earnings(), datetime.now(timezone.utc).date())
+    for note in earnings_notes:
+        print(f"NOTE: {note}")
+    return targets, detail_df
 
 
 PIPELINE_LOG_PATH = "data/pipeline_log.csv"

@@ -10,6 +10,7 @@ submit orders.
 - [ ] Account sharing: prefer a separate paper account. If the intraday scalper shares it, confirm `reserved_symbols` in `config.yaml` lists the pipeline basket, so the scalper skips those names, ignores other positions on re-sync, and cancels only its own orders at EOD. The scalper's daily-loss halt and profit lock use its own P&L, so pipeline P&L can't trigger them. Caveat that remains: buying power is shared (the scalper uses up to 4x intraday leverage).
 - [ ] Timing: scheduled runs can fire hours late (observed 5-6h), so the run itself guards on Alpaca's market clock: in live mode it submits nothing (no orders, no stop changes) when the market is closed, within 15 min of the close, or the clock can't be read. Dry-runs print `Market guard: OK/BLOCKED`. Still do the first live run manually at midday while watching.
 - [ ] A guarded run shows `MARKET GUARD: no stop changes or orders submitted this run.` in the log; that is expected, not a failure. The next run picks up.
+- [ ] Earnings: `baseline_pipeline/earnings_dates.csv` is current (hand-maintained; a past date is treated as unknown and warned about). The log shows `next_earnings` / `days_to_earnings` per name, and the run prints `EARNINGS SOON` within 3 days. Report-only: it does not change sizing, stops or orders, so decide yourself whether to hold off entering a name just before it reports.
 - [ ] Log-commit push to `main` still works (a rejected push fails the run after orders are sent).
 - [ ] No stray open orders in the Alpaca dashboard.
 
