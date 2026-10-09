@@ -38,6 +38,7 @@ class Signal:
     price: float          # breakout close price
     atr: float            # ATR at signal time, used for TP/SL sizing
     reason: str
+    features: Optional[dict] = None  # diagnostic snapshot for ML analysis (see on_bar)
 
 
 class _HTFAggregator:
@@ -149,20 +150,32 @@ class SignalEngine:
             if new_trend == Side.SHORT and close > vwap_val:
                 return None
 
-        # HTF trend filter: abstains (allows) while warming up
-        if self.use_htf_filter:
-            htf_trend = self.htf[symbol].trend(self.htf_ema_p)
-            if htf_trend is not None and htf_trend != new_trend:
-                return None
+        # HTF trend: computed regardless of use_htf_filter so it's available
+        # both as a gate (when enabled) and as a feature for ML analysis.
+        htf_trend = self.htf[symbol].trend(self.htf_ema_p)
+        if self.use_htf_filter and htf_trend is not None and htf_trend != new_trend:
+            return None
+
+        features = {
+            "ema_spread_pct": (e_fast - e_slow) / e_slow,
+            "vol_ratio": bar["volume"] / v_avg,
+            "range_atr_ratio": (bar["high"] - bar["low"]) / a,
+            "vwap_dev_pct": (close - vwap_val) / vwap_val if vwap_val is not None else None,
+            "htf_agree": None if htf_trend is None else (htf_trend == new_trend),
+            "hour_utc": bar["ts"].hour,
+            "entries_this_trend": self.entries_this_trend[symbol],
+        }
 
         if new_trend == Side.LONG and close > hi:
             self.entries_this_trend[symbol] += 1
             return Signal(symbol, Side.LONG, close, a,
-                          f"breakout>{hi:.2f} vol {bar['volume']:.0f}>{self.vol_mult}x{v_avg:.0f}")
+                          f"breakout>{hi:.2f} vol {bar['volume']:.0f}>{self.vol_mult}x{v_avg:.0f}",
+                          features)
         if new_trend == Side.SHORT and close < lo:
             self.entries_this_trend[symbol] += 1
             return Signal(symbol, Side.SHORT, close, a,
-                          f"breakdown<{lo:.2f} vol {bar['volume']:.0f}>{self.vol_mult}x{v_avg:.0f}")
+                          f"breakdown<{lo:.2f} vol {bar['volume']:.0f}>{self.vol_mult}x{v_avg:.0f}",
+                          features)
         return None
 
 

@@ -21,12 +21,13 @@ from scalper.signals import SignalEngine, MeanReversionSignalEngine, Side
 
 
 class SimPosition:
-    def __init__(self, side, entry, qty, ts):
+    def __init__(self, side, entry, qty, ts, features=None):
         self.side, self.entry, self.qty, self.ts = side, entry, qty, ts
         self.trail_armed = False
         self.trail_stop = None
         self.target = None  # will be set based on ATR or percentage
         self.stop = None    # will be set based on ATR or percentage
+        self.features = features  # signal-time diagnostics, for ML analysis
 
 
 USE_MEAN_REVERSION = True  # toggle to validate signals.MeanReversionSignalEngine
@@ -69,7 +70,8 @@ def run_backtest(cfg, bars_by_symbol):
             pnl = gross - costs_paid
             equity += pnl
             trades.append({"symbol": s2, "side": p2.side.value, "pnl": pnl,
-                           "gross": gross, "costs": costs_paid, "reason": reason})
+                           "gross": gross, "costs": costs_paid, "reason": reason,
+                           "features": p2.features, "entry_ts": p2.ts})
 
     # merge all bars into one time-ordered event stream
     events = []
@@ -136,7 +138,8 @@ def run_backtest(cfg, bars_by_symbol):
                 equity += pnl
                 trades.append({"symbol": sym, "side": pos.side.value,
                                "pnl": pnl, "gross": gross, "costs": costs_paid,
-                               "reason": reason})
+                               "reason": reason, "features": pos.features,
+                               "entry_ts": pos.ts})
                 del positions[sym]
             continue  # don't enter on the same bar we manage an open position
 
@@ -167,7 +170,7 @@ def run_backtest(cfg, bars_by_symbol):
                     else:
                         target = sig.price * (1 - tp_pct)
                         stop = sig.price * (1 + sl_pct)
-                pos = SimPosition(sig.side, sig.price, qty, ts)
+                pos = SimPosition(sig.side, sig.price, qty, ts, sig.features)
                 pos.target = target
                 pos.stop = stop
                 positions[sym] = pos
