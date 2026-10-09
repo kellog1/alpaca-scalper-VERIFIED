@@ -26,6 +26,9 @@ def log_upcoming_earnings(symbols: list[str]) -> None:
     except ImportError:
         log.warning("yfinance not installed — skipping earnings-date logging")
         return
+    # yfinance logs a 404 for every ETF (no fundamentals); we report those
+    # ourselves below, so its own logger would only duplicate the noise.
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
     for sym in symbols:
         try:
             d = next_earnings_date(sym)
