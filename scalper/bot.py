@@ -12,6 +12,7 @@ from alpaca.trading.stream import TradingStream
 
 from .config import Config, Credentials
 from .datastream import DataStream
+from .earnings import log_upcoming_earnings
 from .execution import ExecutionEngine
 from .logger import TradeLogger
 from .risk import RiskManager
@@ -125,6 +126,7 @@ class ScalperBot:
         acct = self._account()
         self.risk.start_of_day(float(acct.equity))
         self.exec.resync()
+        await asyncio.to_thread(log_upcoming_earnings, self.cfg["symbols"])
         mode = "DRY RUN" if self.dry_run else "PAPER TRADING"
         log.info("Starting scalper in %s mode. Equity: $%s", mode, acct.equity)
         tasks = [self.stream.run_forever(), self.supervisor()]
