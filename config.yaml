@@ -12,6 +12,10 @@ symbols:
   - SOXS
   - SPY
   - QQQ
+  # Sector ETFs (XLK/XLF/XLV/XLY/XLP/XLE/XLI/XLB/XLU/XLRE/XLC) were added and
+  # then reverted: 60-day backtest showed every single one net-negative under
+  # this strategy's params (see conversation/analysis) — re-add only after
+  # re-testing with parameters tuned for lower-volatility instruments.
 
 bars:
   timeframe_seconds: 30        # aggregate ticks into 30-second bars
