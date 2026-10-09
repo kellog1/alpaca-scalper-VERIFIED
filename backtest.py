@@ -212,6 +212,15 @@ def print_report(start_equity, equity, trades):
     print("=" * 56)
 
 
+def dump_trades(trades, path):
+    """Flatten trades (features dict -> columns) into a CSV."""
+    import pandas as pd
+    rows = [{**{k: v for k, v in t.items() if k != "features"},
+             **(t.get("features") or {})} for t in trades]
+    pd.DataFrame(rows).to_csv(path, index=False)
+    print(f"Wrote {len(rows)} trades to {path}")
+
+
 def _fetch_alpaca_bars(cfg, start, end):
     from alpaca.data.historical import StockHistoricalDataClient
     from alpaca.data.requests import StockBarsRequest
@@ -258,7 +267,17 @@ def main():
     p.add_argument("--source", choices=["alpaca", "tradingview"], default="alpaca",
                    help="Historical data source. tradingview is an unofficial "
                         "third-party feed - see scalper/tv_history.py.")
+    p.add_argument("--breakout", action="store_true",
+                   help="Backtest the live breakout engine instead of the "
+                        "mean-reversion sketch (required for signal features).")
+    p.add_argument("--dump-trades", metavar="CSV",
+                   help="Write per-trade results (with signal features) to CSV "
+                        "for analyze_features.py.")
     args = p.parse_args()
+
+    global USE_MEAN_REVERSION
+    if args.breakout:
+        USE_MEAN_REVERSION = False
 
     cfg = load_config(args.config).raw
 
@@ -279,6 +298,8 @@ def main():
 
     equity, trades = run_backtest(cfg, bars_by_symbol)
     print_report(100_000.0, equity, trades)
+    if args.dump_trades:
+        dump_trades(trades, args.dump_trades)
 
 
 if __name__ == "__main__":
