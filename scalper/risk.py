@@ -54,10 +54,19 @@ class RiskManager:
                  equity, equity * (1 - self.daily_loss_limit))
 
     def check_daily_limits(self, equity: float) -> dict:
-        """Returns {'halt': bool, 'lock_profits': bool} based on day P&L."""
+        """Account-equity variant (used by backtest, where the account is ours alone)."""
         if self.day_start_equity is None:
             self.start_of_day(equity)
-        pnl_pct = (equity - self.day_start_equity) / self.day_start_equity
+        return self.check_daily_pnl(equity - self.day_start_equity)
+
+    def check_daily_pnl(self, pnl_dollars: float) -> dict:
+        """Returns {'halt': bool, 'lock_profits': bool} from the strategy's OWN
+        day P&L in dollars (realized + unrealized), measured against start-of-day
+        equity. Live trading uses this rather than whole-account equity so other
+        strategies sharing the account can't trip the halt or profit lock."""
+        if self.day_start_equity is None:
+            raise RuntimeError("start_of_day() must be called first")
+        pnl_pct = pnl_dollars / self.day_start_equity
 
         if not self.halted and pnl_pct <= -self.daily_loss_limit:
             self.halted = True
@@ -76,10 +85,6 @@ class RiskManager:
         """'active' | 'midday' | 'flatten' | 'closed'"""
         now = (now or datetime.now(self.tz)).astimezone(self.tz)
         t = now.time()
-        flatten_t = time(self.market_close.hour,
-                         self.market_close.minute) if self.flatten_min == 0 else \
-            (datetime.combine(now.date(), self.market_close)
-             .replace(tzinfo=self.tz))
         flatten_start = (datetime.combine(now.date(), self.market_close, self.tz)
                          - timedelta(minutes=self.flatten_min)).time()
 
