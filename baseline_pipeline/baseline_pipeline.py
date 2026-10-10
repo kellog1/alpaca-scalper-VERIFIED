@@ -168,7 +168,29 @@ def _migrate_log_columns(new_columns: list[str]) -> None:
     old.to_csv(PIPELINE_LOG_PATH, index=False)
 
 
-def log_run(detail: pd.DataFrame, run_ts: str | None = None) -> None:
+def _utc_date(run_ts: str):
+    ts = pd.Timestamp(run_ts)
+    return (ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")).date()
+
+
+def already_logged_for_day(run_ts: str) -> bool:
+    """True if the log already has a row from the same UTC day as `run_ts`.
+
+    get_daily_bars ends at the UTC midnight before the run, so every run on one
+    UTC day sees identical bars and produces identical predictions. The workflow
+    fires several times a day (scheduled runs arrive hours late and unpredictably),
+    and extra rows would only duplicate the day's prediction and inflate the
+    sample counts trade_analytics uses to judge calibration. Naive timestamps are
+    treated as UTC.
+    """
+    if not os.path.exists(PIPELINE_LOG_PATH):
+        return False
+    day = _utc_date(run_ts)
+    existing = pd.to_datetime(pd.read_csv(PIPELINE_LOG_PATH, usecols=["run_ts"])["run_ts"], utc=True)
+    return bool((existing.dt.date == day).any())
+
+
+def log_run(detail: pd.DataFrame, run_ts: str | None = None) -> bool:
     """
     Appends this run's predictions/sizing (vol_expansion_proba, entry, stop,
     shares) to a persistent CSV log — this is what trade_analytics.py joins
@@ -177,9 +199,15 @@ def log_run(detail: pd.DataFrame, run_ts: str | None = None) -> None:
     discipline (did the actual exit match the ATR stop that was set here).
     Kept separate from execution so the log captures every run's INTENT
     regardless of whether the orders that day ended up being submitted.
+
+    At most one run per UTC day is logged (see already_logged_for_day). Returns
+    True if rows were written, False if the day was already logged.
     """
     if run_ts is None:
         run_ts = datetime.now(timezone.utc).isoformat()
+    if already_logged_for_day(run_ts):
+        print(f"Log: a run from {_utc_date(run_ts)} (UTC) is already in {PIPELINE_LOG_PATH}; not adding duplicate rows.")
+        return False
     out = detail.copy()
     out.insert(0, "run_ts", run_ts)
     os.makedirs(os.path.dirname(PIPELINE_LOG_PATH) or ".", exist_ok=True)
@@ -188,6 +216,7 @@ def log_run(detail: pd.DataFrame, run_ts: str | None = None) -> None:
     if not write_header:   # align appended rows with the file's header, whatever order/subset this run has
         out = out.reindex(columns=list(pd.read_csv(PIPELINE_LOG_PATH, nrows=0).columns))
     out.to_csv(PIPELINE_LOG_PATH, mode="a", header=write_header, index=False)
+    return True
 
 
 if __name__ == "__main__":
