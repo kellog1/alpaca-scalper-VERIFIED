@@ -22,14 +22,14 @@ from xgboost import XGBClassifier
 from sklearn.metrics import roc_auc_score, accuracy_score
 
 from feature_extractor import extract_features
+from vol_label import vol_ratio, expansion_label, HORIZON, BASELINE_WINDOW
 
 SYMBOLS = ['SPY','QQQ','MSFT','INTC','AMD','MARA','TSLA','NVDA','SOXL','AAPL','JNJ',
            'WBD','MPC','ARE','WDAY','ABNB','TTWO','KHC','PLD','IP','BA','PCG','SOLV',
            'AXON','COHR','COIN','CRWD','DG','ECHO','EXR','FCX','KR','LEN','MRNA','RJF',
            'SLB','SOXS']
 REFERENCE = "SPY"
-HORIZON = 10          # forecast horizon for forward realized vol
-BASELINE_WINDOW = 20  # trailing window vol is compared against
+# HORIZON / BASELINE_WINDOW come from vol_label.py (shared with trade_analytics).
 
 
 def load_data():
@@ -42,19 +42,13 @@ def load_data():
 
 def build_vol_label(df: pd.DataFrame, horizon: int = HORIZON, baseline_window: int = BASELINE_WINDOW):
     """
-    Label = 1 if forward `horizon`-day realized vol > current trailing `baseline_window`-day
-    realized vol by a meaningful margin (>10% relative expansion), else 0.
-    Uses log returns, annualized for interpretability (doesn't affect the classification).
+    Label = 1 if realized vol over the NEXT `horizon` days (t+1..t+horizon) exceeds the
+    trailing `baseline_window`-day realized vol (ending at t) by more than 10%, else 0.
+    Rows whose forward window hasn't elapsed yet are NaN (unknown), not 0.
+    The definition lives in vol_label.py so the live calibration scorer uses the same one.
     """
-    log_ret = np.log(df["close"] / df["close"].shift(1))
-    trailing_vol = log_ret.rolling(baseline_window).std()
-    # forward vol: std of the next `horizon` returns, computed via a forward-shifted rolling window
-    fwd_vol = log_ret.shift(-horizon).rolling(horizon).std().shift(-(horizon - 1))
-    # (shift(-horizon) then rolling(horizon) then shift(-(horizon-1)) aligns the forward window
-    #  to start the day AFTER the current row, ending `horizon` days later)
-    vol_ratio = fwd_vol / trailing_vol.replace(0, np.nan)
-    label = (vol_ratio > 1.10).astype(int)
-    return label, vol_ratio
+    ratio = vol_ratio(df["close"], horizon, baseline_window)
+    return expansion_label(ratio), ratio
 
 
 def build_panel(dfs):
@@ -98,8 +92,8 @@ def walk_forward_eval(panel: pd.DataFrame, n_splits: int = 10):
         if len(train) < 200 or len(test) < 20:
             continue
 
-        X_train, y_train = train[feature_cols], train["label"]
-        X_test, y_test = test[feature_cols], test["label"]
+        X_train, y_train = train[feature_cols], train["label"].astype(int)
+        X_test, y_test = test[feature_cols], test["label"].astype(int)
 
         model = XGBClassifier(
             n_estimators=150, max_depth=4, learning_rate=0.05,

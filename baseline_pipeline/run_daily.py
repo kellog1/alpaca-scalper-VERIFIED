@@ -51,7 +51,8 @@ import pandas as pd
 import alpaca_client
 from baseline_pipeline import build_targets, log_run, BASKET, PIPELINE_LOG_PATH
 from ml_ensemble_vol import SYMBOLS as VOL_TRAIN_SYMBOLS, REFERENCE
-from order_router import reconcile_positions, intents_to_payloads, plan_stop_actions, market_open_check
+from order_router import (reconcile_positions, intents_to_payloads, plan_stop_actions, market_open_check,
+                          unmanaged_symbols, hold_unmanaged)
 
 DRY_RUN = os.environ.get("RUN_DAILY_DRY_RUN", "true").lower() != "false"
 ORDER_LOG_PATH = "data/order_submission_log.csv"
@@ -133,6 +134,15 @@ def main():
     if not market_ok and not DRY_RUN:
         print("MARKET GUARD: no stop changes or orders submitted this run.")
         return
+
+    # A symbol with no usable target (data glitch, constraint rejection) is left alone:
+    # no close, no stop cancel. Only a genuine zero-size target closes a position.
+    unmanaged = unmanaged_symbols(detail, expected=BASKET)
+    if unmanaged:
+        held = sorted(s for s in unmanaged if current_positions.get(s, 0) > 0)
+        print(f"\nWARNING: no usable target for {sorted(unmanaged)} — leaving them untouched"
+              + (f" (held: {held}; positions and stops unchanged)." if held else "."))
+    current_positions = hold_unmanaged(current_positions, unmanaged)
 
     intents = reconcile_positions(current_positions, targets)
 

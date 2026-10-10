@@ -75,7 +75,7 @@ def fit_live_vol_model(price_data: dict | None = None) -> tuple[XGBClassifier, l
         n_estimators=150, max_depth=4, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.8, eval_metric="logloss", random_state=42,
     )
-    model.fit(train[feature_cols], train["label"])
+    model.fit(train[feature_cols], train["label"].astype(int))
     return model, feature_cols
 
 
@@ -105,6 +105,9 @@ def build_targets(equity: float, buying_power: float, current_positions: dict, p
     targets = {}
     detail_rows = []
     for sym in BASKET:
+        if price_data is not None and sym not in price_data:
+            detail_rows.append({"symbol": sym, "skipped": "no price data"})
+            continue
         df = _get(sym)
         feats = extract_features(df, reference=ref_df, symbol=sym)
         latest_feats = feats.iloc[[-1]][feature_cols]
