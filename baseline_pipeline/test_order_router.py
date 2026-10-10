@@ -1,5 +1,7 @@
 """Offline checks for reconcile tolerance and stop planning: python test_order_router.py"""
-from order_router import reconcile_positions, plan_stop_actions, market_open_check
+import pandas as pd
+from order_router import (reconcile_positions, plan_stop_actions, market_open_check,
+                          unmanaged_symbols, hold_unmanaged)
 
 T = lambda q, s: {"qty": q, "stop_price": s}
 stop = lambda i, sym, q, p: {"id": i, "symbol": sym, "type": "stop", "side": "sell", "qty": str(q), "stop_price": str(p)}
@@ -39,4 +41,30 @@ assert market_open_check(clk(timestamp="2026-10-02T15:40:00-04:00"))[0] is True 
 assert market_open_check(clk(timestamp="2026-10-02T15:45:00-04:00"))[0] is True          # exactly 15
 assert market_open_check({})[0] is False and market_open_check({"is_open": True})[0] is False   # malformed: fail closed
 assert market_open_check(clk(next_close="garbage"))[0] is False
+# --- missing target != zero target: skipped symbols are left alone ---
+detail = pd.DataFrame([
+    {"symbol": "NVDA", "skipped": "NaN in latest features"},                       # data glitch
+    {"symbol": "AAPL", "entry": 1.0, "allowed": False, "reason": "weight"},         # constraint rejection
+    {"symbol": "SPY", "entry": 1.0, "allowed": True},
+    {"symbol": "QQQ", "entry": 1.0, "allowed": True, "skipped": float("nan")},
+])
+assert unmanaged_symbols(detail) == {"NVDA", "AAPL"}
+assert unmanaged_symbols(detail, expected=["SPY", "QQQ", "AAPL", "MSFT", "NVDA"]) == {"NVDA", "AAPL", "MSFT"}  # MSFT absent
+assert unmanaged_symbols(pd.DataFrame({"symbol": ["SPY"]})) == set()                   # no skipped/allowed columns
+assert unmanaged_symbols(pd.DataFrame(), expected=["SPY"]) == {"SPY"}                  # nothing came back at all
+assert unmanaged_symbols(pd.DataFrame(), expected=None) == set()
+
+held = {"NVDA": 30, "SPY": 24}
+targets = {"SPY": T(24, 700)}                    # NVDA skipped => no target
+# the bug: unfiltered, the skipped held name is sold and its stop cancelled
+assert [i.action for i in reconcile_positions(held, targets)] == ["close"]
+assert [(a["action"], a["symbol"]) for a in plan_stop_actions(held, targets, [stop("s", "NVDA", 30, 226)])
+        if a["symbol"] == "NVDA"] == [("cancel", "NVDA")]
+# the fix: filtered through hold_unmanaged, NVDA is untouched (no close, no stop cancel)
+managed = hold_unmanaged(held, unmanaged_symbols(detail, expected=["SPY", "NVDA"]))
+assert managed == {"SPY": 24}
+assert reconcile_positions(managed, targets) == []
+assert not any(a["symbol"] == "NVDA" for a in plan_stop_actions(managed, targets, [stop("s", "NVDA", 30, 226)]))
+# a genuine zero-size target (symbol present and allowed) still closes
+assert [i.action for i in reconcile_positions({"SPY": 24}, {})] == ["close"]
 print("all ok")

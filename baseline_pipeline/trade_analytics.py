@@ -40,6 +40,8 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 
+from vol_label import vol_ratio, HORIZON, BASELINE_WINDOW, EXPANSION_THRESHOLD
+
 PIPELINE_LOG_PATH = "data/pipeline_log.csv"
 
 
@@ -183,32 +185,41 @@ def stop_discipline_report(closed_trades: pd.DataFrame, log: pd.DataFrame) -> pd
 #    enough days have passed (horizon=10 trading days, matching the model).
 # ---------------------------------------------------------------------------
 
-def vol_calibration_report(log: pd.DataFrame, price_loader, horizon: int = 10, baseline_window: int = 20) -> pd.DataFrame:
+def vol_calibration_report(log: pd.DataFrame, price_loader, horizon: int = HORIZON, baseline_window: int = BASELINE_WINDOW) -> pd.DataFrame:
     """
     price_loader: callable(symbol) -> DataFrame with a 'close' column
     indexed by date, e.g. baseline_pipeline._load, or a wrapper around
     alpaca_client.get_daily_bars for live data.
+
+    Scores each logged prediction with the same definition the model was trained on
+    (vol_label.py). The bar the model saw is the last one dated strictly before the
+    run's UTC day (get_daily_bars ends at that midnight, so a same-day bar is never
+    in the features, even if it exists by the time we score). Forward vol is then
+    the next `horizon` returns after that bar.
     """
     rows = []
+    ratios: dict[str, pd.Series] = {}
     for _, row in log.iterrows():
-        df = price_loader(row["symbol"])
-        run_date = row["run_ts"].tz_localize(None) if row["run_ts"].tzinfo else row["run_ts"]
-        idx = df.index.searchsorted(run_date)
-        if idx + horizon >= len(df) or idx < baseline_window:
-            continue  # not enough future data yet to score this prediction
-        log_ret = np.log(df["close"] / df["close"].shift(1))
-        trailing_vol = log_ret.iloc[idx - baseline_window: idx].std()
-        fwd_vol = log_ret.iloc[idx + 1: idx + 1 + horizon].std()
-        realized_expansion = (fwd_vol / trailing_vol) > 1.10 if trailing_vol > 0 else None
+        sym = row["symbol"]
+        df = price_loader(sym)
+        if sym not in ratios:
+            ratios[sym] = vol_ratio(df["close"], horizon, baseline_window)
+        run_ts = row["run_ts"]
+        run_day = (run_ts.tz_localize(None) if run_ts.tzinfo else run_ts).normalize()
+        t = df.index.searchsorted(run_day) - 1
+        if t < 0:
+            continue
+        ratio = ratios[sym].iloc[t]
+        if pd.isna(ratio):
+            continue  # forward window not fully elapsed yet, or trailing window incomplete
         rows.append({
-            "symbol": row["symbol"], "run_ts": row["run_ts"],
+            "symbol": sym, "run_ts": run_ts,
             "predicted_proba": row["vol_expansion_proba"],
-            "realized_expansion": realized_expansion,
+            "realized_expansion": bool(ratio > EXPANSION_THRESHOLD),
         })
     if not rows:
         return pd.DataFrame(columns=["symbol", "run_ts", "predicted_proba", "realized_expansion"])
-    scored = pd.DataFrame(rows).dropna(subset=["realized_expansion"])
-    return scored
+    return pd.DataFrame(rows)
 
 
 def calibration_summary(scored: pd.DataFrame, n_buckets: int = 3) -> pd.DataFrame:

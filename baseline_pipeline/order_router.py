@@ -118,6 +118,34 @@ def reconcile_positions(
     return intents
 
 
+def unmanaged_symbols(detail: pd.DataFrame, expected=None) -> set[str]:
+    """
+    Symbols build_targets could not produce a trustworthy target for: skipped
+    rows (NaN features, ATR unavailable, no price data), rows rejected by the
+    portfolio constraints, and any `expected` symbol missing from the detail.
+
+    A missing target must mean "don't touch", never "target is zero". Without
+    this, reconcile_positions would market-sell a held position, and
+    plan_stop_actions would cancel its stop, over a transient data glitch.
+    """
+    seen = set(detail["symbol"]) if "symbol" in detail else set()
+    out: set[str] = set(expected or ()) - seen
+    if len(detail) and "symbol" in detail:
+        bad = pd.Series(False, index=detail.index)
+        if "skipped" in detail:
+            bad |= detail["skipped"].notna() & (detail["skipped"].astype(str) != "")
+        if "allowed" in detail:
+            bad |= detail["allowed"] == False   # noqa: E712 (NaN on skipped rows must not count twice)
+        out |= set(detail.loc[bad, "symbol"])
+    return out
+
+
+def hold_unmanaged(current_positions: dict, unmanaged) -> dict:
+    """Positions the reconciler and stop planner may act on: everything except
+    the unmanaged symbols, which are left exactly as they are (position and stop)."""
+    return {s: q for s, q in current_positions.items() if s not in unmanaged}
+
+
 MIN_MINUTES_TO_CLOSE = 15   # don't send orders in the last 15 minutes of the session
 
 
