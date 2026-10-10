@@ -1,0 +1,61 @@
+name: Tests
+
+# Offline checks only: no Alpaca keys, no network, nothing here can place orders.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline-pipeline:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: baseline_pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: baseline_pipeline/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          # test_*.py are plain-assert scripts (no pytest); any failure fails the job.
+          # The glob must match something, or a typo would silently run nothing.
+          tests=(test_*.py)
+          [ -e "${tests[0]}" ] || { echo "::error::no test_*.py found"; exit 1; }
+          for t in "${tests[@]}"; do
+            echo "=== $t"
+            python "$t" || { echo "::error::$t failed"; exit 1; }
+          done
+
+  scalper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python test_shared_account.py
