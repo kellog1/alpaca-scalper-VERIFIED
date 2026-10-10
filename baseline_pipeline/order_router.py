@@ -146,6 +146,20 @@ def hold_unmanaged(current_positions: dict, unmanaged) -> dict:
     return {s: q for s, q in current_positions.items() if s not in unmanaged}
 
 
+def symbols_with_pending_orders(open_orders: list[dict]) -> set[str]:
+    """
+    Symbols with an open order other than a plain protective sell-stop: an
+    unfilled entry, a closing/reducing sell, a limit order, etc.
+
+    The workflow fires several times a day, so a symbol with work still in
+    flight must be left alone; reconciling it again would submit a duplicate
+    order. Protective stops are excluded because they are expected to stay open
+    (often overnight) and are managed by plan_stop_actions.
+    """
+    return {o["symbol"] for o in open_orders
+            if o.get("symbol") and not (o.get("type") == "stop" and o.get("side") == "sell")}
+
+
 MIN_MINUTES_TO_CLOSE = 15   # don't send orders in the last 15 minutes of the session
 
 

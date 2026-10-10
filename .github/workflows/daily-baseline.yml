@@ -2,9 +2,18 @@ name: Daily baseline pipeline
 
 on:
   schedule:
-    # 12:52 UTC = ~7:52am US Central during daylight time (drifts 1hr around
-    # DST changes — adjust if that matters to you). Runs weekdays only.
+    # GitHub starts scheduled runs hours late and unpredictably: all 8 observed
+    # runs of the old single 12:52 UTC trigger started 5h12m-7h57m late (18:04-20:49
+    # UTC), so one trigger a day can miss the market window (13:30-20:00 UTC in
+    # EDT, 14:30-21:00 in EST). Fire several, weekdays only; at least one should
+    # land inside market hours whatever the delay. This is safe because a run is
+    # idempotent: the market guard blocks anything outside open hours, symbols with
+    # an order in flight are left alone, and only the first run per UTC day is
+    # written to pipeline_log.csv.
     - cron: "52 12 * * 1-5"
+    - cron: "52 14 * * 1-5"
+    - cron: "52 16 * * 1-5"
+    - cron: "52 18 * * 1-5"
   workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
 
 permissions:

@@ -1,7 +1,7 @@
 """Offline checks for reconcile tolerance and stop planning: python test_order_router.py"""
 import pandas as pd
 from order_router import (reconcile_positions, plan_stop_actions, market_open_check,
-                          unmanaged_symbols, hold_unmanaged)
+                          unmanaged_symbols, hold_unmanaged, symbols_with_pending_orders)
 
 T = lambda q, s: {"qty": q, "stop_price": s}
 stop = lambda i, sym, q, p: {"id": i, "symbol": sym, "type": "stop", "side": "sell", "qty": str(q), "stop_price": str(p)}
@@ -67,4 +67,15 @@ assert reconcile_positions(managed, targets) == []
 assert not any(a["symbol"] == "NVDA" for a in plan_stop_actions(managed, targets, [stop("s", "NVDA", 30, 226)]))
 # a genuine zero-size target (symbol present and allowed) still closes
 assert [i.action for i in reconcile_positions({"SPY": 24}, {})] == ["close"]
+# --- pending orders: the workflow runs several times a day, so work in flight is left alone ---
+o = lambda sym, typ, side: {"id": "x", "symbol": sym, "type": typ, "side": side, "status": "new"}
+assert symbols_with_pending_orders([]) == set()
+assert symbols_with_pending_orders([o("SPY", "stop", "sell")]) == set()                  # protective stop: expected to stay open
+assert symbols_with_pending_orders([o("SPY", "market", "buy")]) == {"SPY"}               # unfilled entry
+assert symbols_with_pending_orders([o("QQQ", "market", "sell")]) == {"QQQ"}              # closing/reducing sell in flight
+assert symbols_with_pending_orders([o("AAPL", "limit", "sell")]) == {"AAPL"}
+assert symbols_with_pending_orders([o("MSFT", "stop_limit", "sell")]) == {"MSFT"}        # not a plain stop: be conservative
+assert symbols_with_pending_orders([o("SPY", "stop", "buy")]) == {"SPY"}                 # a buy-stop is an entry, not protection
+assert symbols_with_pending_orders([o("NVDA", "stop", "sell"), o("NVDA", "market", "buy")]) == {"NVDA"}
+assert symbols_with_pending_orders([{"type": "market", "side": "buy"}]) == set()         # no symbol: ignored, no crash
 print("all ok")

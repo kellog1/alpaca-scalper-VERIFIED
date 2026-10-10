@@ -52,7 +52,7 @@ import alpaca_client
 from baseline_pipeline import build_targets, log_run, BASKET, PIPELINE_LOG_PATH
 from ml_ensemble_vol import SYMBOLS as VOL_TRAIN_SYMBOLS, REFERENCE
 from order_router import (reconcile_positions, intents_to_payloads, plan_stop_actions, market_open_check,
-                          unmanaged_symbols, hold_unmanaged)
+                          unmanaged_symbols, hold_unmanaged, symbols_with_pending_orders)
 
 DRY_RUN = os.environ.get("RUN_DAILY_DRY_RUN", "true").lower() != "false"
 ORDER_LOG_PATH = "data/order_submission_log.csv"
@@ -135,20 +135,31 @@ def main():
         print("MARKET GUARD: no stop changes or orders submitted this run.")
         return
 
+    # This workflow fires several times a day (scheduled runs arrive hours late and
+    # unpredictably), so a run must be safe to repeat. A symbol with an order still
+    # in flight (e.g. an entry that hasn't filled) is left alone, or reconciling it
+    # again would submit a duplicate.
+    open_orders = alpaca_client.get_open_orders()
+    pending = symbols_with_pending_orders(open_orders) & set(BASKET)
+    if pending:
+        print(f"\nPending orders on {sorted(pending)}: leaving them untouched this run.")
+
     # A symbol with no usable target (data glitch, constraint rejection) is left alone:
     # no close, no stop cancel. Only a genuine zero-size target closes a position.
-    unmanaged = unmanaged_symbols(detail, expected=BASKET)
-    if unmanaged:
-        held = sorted(s for s in unmanaged if current_positions.get(s, 0) > 0)
-        print(f"\nWARNING: no usable target for {sorted(unmanaged)} — leaving them untouched"
+    no_target = unmanaged_symbols(detail, expected=BASKET)
+    if no_target:
+        held = sorted(s for s in no_target if current_positions.get(s, 0) > 0)
+        print(f"\nWARNING: no usable target for {sorted(no_target)} — leaving them untouched"
               + (f" (held: {held}; positions and stops unchanged)." if held else "."))
-    current_positions = hold_unmanaged(current_positions, unmanaged)
+    current_positions = hold_unmanaged(current_positions, no_target | pending)
+    # Drop the pending symbols' targets too: with their position hidden, a surviving
+    # target would look like a new entry.
+    targets = {s: t for s, t in targets.items() if s not in pending}
 
     intents = reconcile_positions(current_positions, targets)
 
     # Stop maintenance for shares already held (runs before any market orders,
     # so a closing sell isn't blocked by shares held for a stop).
-    open_orders = alpaca_client.get_open_orders()
     stop_actions = plan_stop_actions(current_positions, targets, open_orders)
     print(f"\n{len(stop_actions)} stop action(s) on held positions:")
     for a in stop_actions:
