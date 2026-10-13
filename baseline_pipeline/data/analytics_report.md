@@ -1,6 +1,6 @@
-# Trade analytics — 2026-10-10 14:46 UTC
+# Trade analytics — 2026-10-13 02:59 UTC
 
-Pipeline log rows: 60 | pipeline fills: 0 (excluded 75 earlier basket-symbol fills from before the first pipeline run 2026-09-30 00:06 UTC)
+Pipeline log rows: 75 | pipeline fills: 0 (excluded 75 earlier basket-symbol fills from before the first pipeline run 2026-09-30 00:06 UTC)
 
 ## Fills
 
