@@ -1,6 +1,6 @@
-# Trade analytics — 2026-11-25 04:52 UTC
+# Trade analytics — 2026-11-26 04:05 UTC
 
-Pipeline log rows: 230 | pipeline fills: 0 (excluded 75 earlier basket-symbol fills from before the first pipeline run 2026-09-30 00:06 UTC)
+Pipeline log rows: 235 | pipeline fills: 0 (excluded 75 earlier basket-symbol fills from before the first pipeline run 2026-09-30 00:06 UTC)
 
 ## Fills
 
@@ -10,7 +10,7 @@ _No basket fills yet — slippage, stop discipline and P&L need live-paper trade
 
 ```
         bucket  n  mean_predicted_proba  actual_expansion_rate
-(0.135, 0.306] 61              0.252934               0.278689
-(0.306, 0.448] 59              0.373271               0.593220
-(0.448, 0.646] 60              0.530867               0.750000
+(0.103, 0.305] 62              0.244468               0.306452
+(0.305, 0.443] 61              0.367311               0.573770
+(0.443, 0.646] 62              0.528097               0.741935
 ```
